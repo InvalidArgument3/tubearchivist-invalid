@@ -40,7 +40,7 @@ class DownloaderBase:
     PLAYLIST_QUICK = "download:playlist:quick"
     VIDEO_QUEUE = "download:video"
 
-    def __init__(self, task):
+    def __init__(self, task=None):
         self.task = task
         self.config = AppConfig().config
         self.channel_overwrites = get_channel_overwrites()
@@ -196,15 +196,6 @@ class VideoDownloader(DownloaderBase):
                 }
             )
 
-        if self.config["downloads"]["add_thumbnail"]:
-            postprocessors.append(
-                {
-                    "key": "EmbedThumbnail",
-                    "already_have_thumbnail": True,
-                }
-            )
-            self.obs["writethumbnail"] = True
-
         self.obs["postprocessors"] = postprocessors
 
     def _set_overwrites(self, obs: dict, channel_id: str) -> None:
@@ -326,6 +317,9 @@ class DownloadPostProcess(DownloaderBase):
         for channel_id, value in self.channel_overwrites.items():
             if "autodelete_days" in value:
                 autodelete_days = value.get("autodelete_days")
+                if autodelete_days is None:
+                    continue
+
                 print(f"{channel_id}: delete older than {autodelete_days}d")
                 now_lte = str(self.now - autodelete_days * 24 * 60 * 60)
                 must_list = [
@@ -381,6 +375,9 @@ class DownloadPostProcess(DownloaderBase):
             try:
                 playlist = YoutubePlaylist(playlist_id)
                 playlist.update_playlist(skip_on_empty=True)
+                if not playlist.json_data:
+                    raise ValueError("no json data extracted for playlist")
+
             except ValueError as err:
                 message = [
                     f"{playlist_id}: skip failed playlist import",
@@ -432,7 +429,7 @@ class DownloadPostProcess(DownloaderBase):
             channel = YoutubeChannel(channel_id)
             channel.get_from_es()
             overwrites = channel.get_overwrites()
-            if "index_playlists" in overwrites:
+            if overwrites.get("index_playlists"):
                 channel.get_all_playlists()
                 to_add = [i[0] for i in channel.all_playlists]
                 RedisQueue(self.PLAYLIST_QUEUE).add_list(to_add)
@@ -464,6 +461,7 @@ class DownloadPostProcess(DownloaderBase):
             playlist.get_from_es()
             playlist.add_vids_to_playlist()
             playlist.remove_vids_from_playlist()
+            playlist.match_local()
 
             if not self.task:
                 continue
